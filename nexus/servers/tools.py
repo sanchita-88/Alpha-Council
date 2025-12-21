@@ -1,35 +1,59 @@
-# FIX: Use absolute imports starting from 'nexus'
+import yfinance as yf
 from nexus.servers.registry import registry
 from nexus.indicators.rsi import calculate_rsi
 from nexus.indicators.sma import calculate_sma
 
-# NOTE: We use a dummy list for now to prove the wiring works without API keys.
-# In Phase 3, we will swap this for yfinance data.
-MOCK_PRICES = [100.0, 102.0, 104.0, 103.0, 105.0, 107.0, 110.0, 108.0, 109.0, 111.0, 
-               115.0, 120.0, 122.0, 118.0, 119.0, 121.0, 125.0, 130.0, 128.0, 132.0]
+def fetch_price_history(ticker: str, period: str = "3mo") -> list[float]:
+    """
+    Fetches historical closing prices from Yahoo Finance.
+    Returns a list of floats.
+    """
+    try:
+        # 1. Download data (quietly)
+        stock = yf.Ticker(ticker)
+        df = stock.history(period=period)
+        
+        if df.empty:
+            print(f"Error: No data found for {ticker}")
+            return []
+            
+        # 2. Convert to simple list of floats
+        return df['Close'].tolist()
+        
+    except Exception as e:
+        print(f"Connection Error: {e}")
+        return []
 
 @registry.register("get_technical_summary")
 def get_technical_summary(ticker: str) -> dict:
     """
-    Returns deterministic technical indicators for a ticker.
-    Currently uses mock data to ensure system stability.
+    Returns deterministic technical indicators for a ticker using LIVE DATA.
     """
-    # 1. Fetch Data (Mock for now, will be yfinance in Phase 3)
-    prices = MOCK_PRICES 
-    current_price = prices[-1]
+    # 1. Fetch Real Data
+    prices = fetch_price_history(ticker)
+    
+    if not prices or len(prices) < 50:
+        return {"error": f"Not enough data for {ticker}", "status": "failed"}
 
-    # 2. Compute Deterministic Indicators (Your Code)
+    current_price = round(prices[-1], 2)
+
+    # 2. Compute Deterministic Indicators
     rsi = calculate_rsi(prices, period=14)
-    sma_5 = calculate_sma(prices, period=5)
+    sma_50 = calculate_sma(prices, period=50)
 
-    # 3. Return Pure JSON
+    # 3. Generate Signal
+    signal = "HOLD"
+    if rsi < 30: signal = "BUY (Oversold)"
+    elif rsi > 70: signal = "SELL (Overbought)"
+
+    # 4. Return Pure JSON
     return {
         "ticker": ticker.upper(),
         "current_price": current_price,
         "indicators": {
             "rsi_14": rsi,
-            "sma_5": sma_5,
-            "signal": "BUY" if rsi < 30 else "SELL" if rsi > 70 else "HOLD"
+            "sma_50": sma_50,
+            "signal": signal
         },
-        "data_source": "deterministic_engine_v1"
+        "data_source": "yfinance_live"
     }
