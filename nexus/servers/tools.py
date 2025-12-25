@@ -1,93 +1,68 @@
 import yfinance as yf
-from duckduckgo_search import DDGS # The 'ddgs' package still uses this import
-from nexus.servers.registry import registry
+import json
+from duckduckgo_search import DDGS
+
+# Proper Modular Imports (These will work after Phase 4)
+from nexus.indicators.sma import calculate_sma, is_uptrend
 from nexus.indicators.rsi import calculate_rsi
-from nexus.indicators.sma import calculate_sma
 
-# --- HELPER FUNCTIONS ---
-
-def fetch_price_history(ticker: str, period: str = "3mo") -> list[float]:
-    """Fetches historical closing prices."""
+def get_technical_summary(ticker: str) -> str:
+    """Fetches data and calculates technical indicators."""
     try:
         stock = yf.Ticker(ticker)
-        df = stock.history(period=period)
-        if df.empty: return []
-        return df['Close'].tolist()
+        hist = stock.history(period="1y")
+        
+        if hist.empty:
+            return "Error: No data found for ticker."
+
+        # Extract Series
+        closes = hist['Close']
+        
+        # Calculate Indicators using your modular functions
+        current_price = closes.iloc[-1]
+        rsi = calculate_rsi(closes)
+        sma_50 = calculate_sma(closes, 50)
+        sma_20 = calculate_sma(closes, 20)
+        trend = is_uptrend(current_price, sma_50)
+
+        data = {
+            "ticker": ticker,
+            "price": round(current_price, 2),
+            "rsi": rsi,
+            "sma_20": round(sma_20, 2),
+            "sma_50": round(sma_50, 2),
+            "is_uptrend": bool(trend),
+            "volume": int(hist['Volume'].iloc[-1])
+        }
+        return json.dumps(data, indent=2)
     except Exception as e:
-        print(f"Connection Error: {e}")
-        return []
+        return f"Error in technical analysis: {e}"
 
-# --- AGENT TOOLS ---
-
-@registry.register("get_technical_summary")
-def get_technical_summary(ticker: str) -> dict:
-    """[Technical Agent] Returns deterministic indicators (RSI, SMA)."""
-    prices = fetch_price_history(ticker)
-    
-    if not prices or len(prices) < 50:
-        return {"error": f"Not enough data for {ticker}", "status": "failed"}
-
-    current_price = round(prices[-1], 2)
-    rsi = calculate_rsi(prices, period=14)
-    sma_50 = calculate_sma(prices, period=50)
-
-    signal = "HOLD"
-    if rsi < 30: signal = "BUY (Oversold)"
-    elif rsi > 70: signal = "SELL (Overbought)"
-
-    return {
-        "ticker": ticker.upper(),
-        "current_price": current_price,
-        "indicators": {
-            "rsi_14": rsi,
-            "sma_50": sma_50,
-            "signal": signal
-        },
-        "data_source": "yfinance_live"
-    }
-
-@registry.register("get_market_news")
-def get_market_news(query: str) -> list[dict]:
-    """[Risk Agent] Searches DuckDuckGo for news."""
-    try:
-        # We use max_results=3 to keep it fast
-        results = DDGS().text(keywords=f"{query} stock news", region='us-en', max_results=3)
-        if not results:
-            return [{"error": "No news found."}]
-            
-        clean_results = []
-        for r in results:
-            clean_results.append({
-                "title": r.get('title'),
-                "url": r.get('href'),
-                "snippet": r.get('body')
-            })
-        return clean_results
-    except Exception as e:
-        return [{"error": f"Search failed: {str(e)}"}]
-
-@registry.register("get_company_info")
-def get_company_info(ticker: str) -> dict:
-    """[Fundamental Agent] Fetches comprehensive financial health data."""
+def get_company_info(ticker: str) -> str:
+    """Fetches fundamental data."""
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
         
-        # KEY UPDATE: Added Debt, Margins, and Growth for the Fundamental Agent
-        return {
-            "ticker": ticker.upper(),
-            "name": info.get('longName', 'Unknown'),
+        data = {
+            "ticker": ticker,
             "sector": info.get('sector', 'Unknown'),
-            "market_cap": info.get('marketCap', 'N/A'),
-            "pe_ratio": info.get('trailingPE', 'N/A'),
-            "forward_pe": info.get('forwardPE', 'N/A'),
-            "dividend_yield": info.get('dividendYield', 'N/A'),
-            # New Metrics added below:
-            "profit_margins": info.get('profitMargins', 'N/A'),
-            "revenue_growth": info.get('revenueGrowth', 'N/A'),
-            "debt_to_equity": info.get('debtToEquity', 'N/A'),
-            "free_cashflow": info.get('freeCashflow', 'N/A'),
-            "data_source": "yfinance_fundamentals"
+            "pe_ratio": info.get('trailingPE', 0),
+            "margins": info.get('profitMargins', 0),
+            "debt_equity": info.get('debtToEquity', 0)
         }
+        return json.dumps(data, indent=2)
     except Exception as e:
-        return {"error": str(e), "status": "failed"}
+        return f"Error fetching fundamentals: {e}"
+
+def get_market_news(query: str) -> str:
+    """Searches for news."""
+    try:
+        results = DDGS().text(query, max_results=3)
+        if not results:
+            return "No news found."
+        
+        formatted = [f"- {r['title']} ({r['href']})" for r in results]
+        return "\n".join(formatted)
+    except Exception as e:
+        return f"Error searching news: {e}"
