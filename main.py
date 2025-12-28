@@ -1,61 +1,82 @@
-import asyncio
 import os
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# 1. LOAD API KEYS (CRITICAL STEP)
-load_dotenv()
-
-# Verify key exists
-if not os.getenv("GROQ_API_KEY"):
-    print("❌ ERROR: GROQ_API_KEY not found. Check your .env file!")
-    exit(1)
-
-from agent.state import AgentState
+# Import your graph logic
 from agent.graph import app as graph
 
-async def run_stress_test():
-    print("🔥 STARTING STRESS TEST ON AGENT BRAINS 🔥")
-    print("="*60)
+load_dotenv()
 
-    # 2. Define Tickers
-    tickers = ["TSLA", "KO", "GME"] 
+app = FastAPI(title="Rhetora AI Backend")
 
-    for ticker in tickers:
-        print(f"\n🔎 Analyzing {ticker}...")
-        
-        initial_state = {
-            "ticker": ticker,
-            "messages": [],
-            "user_style": "investor",
-            "risk_profile": "moderate"
-        }
+# Allow Lovable to connect
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-        # 3. Run the Graph
+# This matches the data Lovable will send
+class AnalysisRequest(BaseModel):
+    ticker: str
+    user_style: str = "investor"
+    risk_profile: str = "moderate"
+
+@app.get("/")
+def read_root():
+    return {"status": "active", "service": "Rhetora Backend"}
+
+@app.post("/analyze")
+async def run_analysis(request: AnalysisRequest):
+    # Check for API Key
+    if not os.getenv("GROQ_API_KEY"):
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY missing")
+
+    print(f"🔥 Incoming Request: {request.ticker} ({request.user_style}/{request.risk_profile})")
+
+    # Initialize the state EXACTLY how your agents expect it
+    initial_state = {
+        "ticker": request.ticker,
+        "messages": [],
+        "user_style": request.user_style,
+        "risk_profile": request.risk_profile
+    }
+
+    try:
+        # Run the Agents
         result = await graph.ainvoke(initial_state)
-        
-        # 4. Print Deep Analysis
-        print(f"--- 🧠 AGENT THOUGHTS FOR {ticker} ---")
-        
-        print(f"\n📈 [Technical Analyst]:")
-        print(f"   Thesis: \"{result.get('tech_thesis_final', 'No thesis')}\"")
-        print(f"   Confidence: {result.get('tech_confidence_final')}%")
 
-        print(f"\n💰 [Fundamental Analyst]:")
-        print(f"   Thesis: \"{result.get('fund_thesis_final', 'No thesis')}\"")
-        print(f"   Confidence: {result.get('fund_confidence_final')}%")
-
-        print(f"\n🚨 [Risk Manager]:")
-        print(f"   Score: {result.get('risk_danger_score')}/100")
-        print(f"   Critique: \"{result.get('risk_critique_tech', 'No critique')}\"")
-
-        print("-" * 30)
-        
-        # 5. Print Final Verdict
-        print(f"🎯 FINAL VERDICT:")
-        print(f"   Signal:     {result['final_signal']}") 
-        print(f"   Confidence: {result['final_confidence']}%") 
-        print(f"   Explanation: {result['final_explanation']}")
-        print("="*60)
+        # Send the JSON back to Lovable
+        return {
+            "ticker": request.ticker,
+            "final_verdict": {
+                "signal": result.get("final_signal", "HOLD"),
+                "confidence": result.get("final_confidence", 0),
+                "explanation": result.get("final_explanation", "")
+            },
+            "technical_analysis": {
+                "thesis": result.get("tech_thesis_final", ""),
+                "confidence": result.get("tech_confidence_final", 0)
+            },
+            "fundamental_analysis": {
+                "thesis": result.get("fund_thesis_final", ""),
+                "confidence": result.get("fund_confidence_final", 0)
+            },
+            "risk_analysis": {
+                "score": result.get("risk_danger_score", 0),
+                "critique": result.get("risk_critique_tech", "")
+            }
+        }
+    
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    asyncio.run(run_stress_test())
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
