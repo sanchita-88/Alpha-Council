@@ -1,6 +1,6 @@
 import yfinance as yf
 import json
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # Proper Modular Imports (These will work after Phase 4)
 from nexus.indicators.sma import calculate_sma, is_uptrend
